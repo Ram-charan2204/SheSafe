@@ -1,0 +1,134 @@
+/* =========================
+   PAGE LAYOUT
+========================= */
+.page {
+  padding: 20px;
+}
+
+.subtitle {
+  color: #666;
+  margin-bottom: 20px;
+}
+
+/* =========================
+   CAMERA GRID
+========================= */
+.camera-grid {
+  display: flex;
+  justify-content: center;   /* 👈 center single camera */
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+/* =========================
+   CAMERA CARD
+========================= */
+.camera-card {
+  width: 420px;              /* 👈 CONTROL SIZE HERE */
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #ddd;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.camera-card:hover {
+  transform: scale(1.02);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+}
+
+.camera-card.alert {
+  border: 2px solid #e53935;
+}
+
+/* =========================
+   CAMERA VIDEO
+========================= */
+.camera-feed {
+  width: 100%;
+  overflow: hidden;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+.camera-stream {
+  width: 100%;
+  height: auto;              /* 👈 keeps aspect ratio */
+  display: block;
+}
+
+/* =========================
+   CAMERA INFO
+========================= */
+.camera-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.camera-name {
+  font-weight: 600;
+}
+
+.camera-status {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.camera-status.active {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.camera-status.alert {
+  background: #ffebee;
+  color: #c62828;
+}
+
+/* =========================
+   FULLSCREEN MODAL
+========================= */
+.camera-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+}
+
+.camera-modal-content {
+  background: #000;
+  border-radius: 10px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.camera-modal-stream {
+  width: 100%;
+  height: auto;
+}
+
+/* =========================
+   MODAL HEADER
+========================= */
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #111;
+  color: #fff;
+}
+
+.modal-header button {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
