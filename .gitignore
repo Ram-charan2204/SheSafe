@@ -1,7 +1,7 @@
 backend/__pycache__/
 backend/modules/__pycache__/
 backend/runs
-backend/
+backend/models/gender
 frontend/node_modules/
 frontend/public/
 frontend/eslint.config.js
