@@ -2,36 +2,20 @@ import { useEffect, useState } from "react";
 import "../styles/dashboard.css";
 
 function Dashboard() {
-  const [stats, setStats] = useState({
-    persons: 0,
-    women: 0,
-    alerts: 0
-  });
+  const [stats, setStats] = useState({ persons: 0, women: 0 });
+
+  const loadStats = async () => {
+    const res = await fetch("/api/stats");
+    const data = await res.json();
+    setStats(data);
+  };
 
   useEffect(() => {
-  fetch("/api/stats").then(r => r.json()).then(setStats)
-}, [])
-
-
-  useEffect(() => {
-    const fetchStats = () => {
-      fetch("/api/stats")
-        .then((res) => res.json())
-        .then((data) =>
-          setStats((prev) => ({ ...prev, ...data }))
-        );
-
-      fetch("/api/alerts")
-        .then((res) => res.json())
-        .then((alerts) =>
-          setStats((prev) => ({ ...prev, alerts: alerts.length }))
-        );
-    };
-
-    fetchStats();
-    const interval = setInterval(fetchStats, 2000);
-    return () => clearInterval(interval);
+    loadStats();
+    const id = setInterval(loadStats, 2000);
+    return () => clearInterval(id);
   }, []);
+
 
   return (
     <div className="page">

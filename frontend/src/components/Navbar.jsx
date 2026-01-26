@@ -12,6 +12,19 @@ function Navbar() {
     fetchCameras().then((cams) => setCameraCount(cams.length));
     fetchAlerts().then((alerts) => setAlertCount(alerts.length));
   }, []);
+  
+  useEffect(() => {
+  const load = async () => {
+    const cams = await fetchCameras();
+    const alerts = await fetchAlerts();
+    setCameraCount(cams.length);
+    setAlertCount(alerts.length);
+  };
+
+  load();
+  const id = setInterval(load, 3000);
+  return () => clearInterval(id);
+}, []);
 
   return (
     <header className="navbar">

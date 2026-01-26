@@ -12,10 +12,16 @@ class AlertLogger:
             with open(self.file, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "timestamp", "camera_id", "alert_type", "latitude", "longitude"
+                    "timestamp",
+                    "camera_id",
+                    "alert_type",
+                    "severity",
+                    "risk",
+                    "latitude",
+                    "longitude"
                 ])
 
-    def should_log(self, cam_id, alert, cooldown=10):
+    def should_log(self, cam_id, alert, cooldown=5):
         now = time.time()
         key = f"{cam_id}:{alert}"
         if key not in self.last_alert or now - self.last_alert[key] > cooldown:
@@ -23,13 +29,15 @@ class AlertLogger:
             return True
         return False
 
-    def log(self, camera_id, alert_type, lat, lon):
+    def log(self, camera_id, alert_type, lat, lon, severity="MEDIUM", risk=1):
         with open(self.file, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 camera_id,
                 alert_type,
+                severity,
+                risk,
                 lat,
                 lon
             ])

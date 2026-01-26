@@ -21,3 +21,5 @@ class AlertSound:
                 args=(self.sounds[key],),
                 daemon=True
             ).start()
+
+

@@ -1,9 +1,10 @@
 import csv
 import time
-from flask import jsonify, send_file
+from flask import jsonify, send_file, Response
 from camera_config import CAMERAS
 from stats_store import stats, stats_lock, camera_heartbeat, heartbeat_lock
-
+from init_risk_state import camera_risk, high_risk_zones
+import os
 # ---------------- CAMERA STATUS ----------------
 def get_camera_status(cam_id):
     with heartbeat_lock:
@@ -56,11 +57,7 @@ def register_api_routes(app):
                         "camera": row["camera_id"],
                         "message": row["alert_type"],
                         "time": row["timestamp"],
-                        "severity": (
-                            "HIGH" if "surrounded" in row["alert_type"].lower()
-                            else "MEDIUM" if "isolated" in row["alert_type"].lower()
-                            else "LOW"
-                        )
+                        "severity": row["severity"]   # ✅ TRUST BACKEND
                     })
         except FileNotFoundError:
             pass
@@ -68,27 +65,65 @@ def register_api_routes(app):
         alerts.reverse()
         return jsonify(alerts[:50])
 
+
     # ===== HOTSPOT MAP =====
     @app.route("/api/hotspots/map")
     def hotspot_map():
-        return send_file("crime_hotspot_map.html")
+        map_path = "crime_hotspot_map.html"
+
+        if not os.path.exists(map_path):
+            return Response(
+                """
+                <html>
+                <head>
+                    <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100vh;
+                        background: #0f172a;
+                        color: #e5e7eb;
+                    }
+                    .box {
+                        text-align: center;
+                        padding: 24px;
+                        border: 1px dashed #64748b;
+                        border-radius: 12px;
+                    }
+                    </style>
+                </head>
+                <body>
+                    <div class="box">
+                    <h2>📍 Hotspot Map Not Ready</h2>
+                    <p>Waiting for alerts & analytics…</p>
+                    </div>
+                </body>
+                </html>
+                """,
+                status=200,
+                mimetype="text/html"
+            )
+
+        return send_file(map_path)
 
     # ===== HOTSPOT LIST (🔥 MISSING FIX) =====
     @app.route("/api/hotspots")
-    def hotspot_list():
+    def hotspots():
         hotspots = []
         try:
             with open("hotspot_priority.csv", newline="") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     hotspots.append({
-                        "lat": row["lat_bucket"],
-                        "lon": row["lon_bucket"],
+                        "lat": float(row["lat_bucket"]),
+                        "lon": float(row["lon_bucket"]),
                         "risk": float(row["total_risk"]),
                         "alerts": int(row["alert_count"])
                     })
         except FileNotFoundError:
             pass
 
-        hotspots.sort(key=lambda x: x["risk"], reverse=True)
         return jsonify(hotspots)
+

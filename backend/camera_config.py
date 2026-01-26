@@ -8,7 +8,7 @@ CAMERAS = [
     },
     {
             "id": "CAM-MOB-01",
-            "source": "http://192.168.1.40:8080/video",
+            "source": "http://192.168.1.37:8080/video",
             "lat": 17.3900,
             "lon": 78.4910,
             "location": "Hyderabad Central"

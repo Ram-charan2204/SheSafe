@@ -6,6 +6,17 @@ function Analytics() {
   const [hotspots, setHotspots] = useState([]);
 
   useEffect(() => {
+  const load = async () => {
+    const data = await fetchHotspots();
+    setHotspots(data || []);
+  };
+
+  load();
+  const id = setInterval(load, 5000);
+  return () => clearInterval(id);
+}, []);
+
+  useEffect(() => {
     const loadHotspots = () => {
       fetchHotspots().then(setHotspots);
     };

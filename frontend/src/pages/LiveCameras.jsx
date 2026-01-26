@@ -12,10 +12,20 @@ function LiveCameras() {
   const last = useRef({ x: 0, y: 0 });
   const dragging = useRef(false);
 
+  /* ---------------- AUTO REFRESH ---------------- */
   useEffect(() => {
-    fetchCameras()
-      .then((data) => setCameras(data || []))
-      .catch(() => setCameras([]));
+    const load = async () => {
+      try {
+        const data = await fetchCameras();
+        setCameras(data || []);
+      } catch {
+        setCameras([]);
+      }
+    };
+
+    load();
+    const id = setInterval(load, 3000);
+    return () => clearInterval(id);
   }, []);
 
   /* ---------------- ZOOM / PAN ---------------- */
@@ -43,6 +53,16 @@ function LiveCameras() {
     setPos({ x: 0, y: 0 });
   };
 
+  const stopDrag = () => {
+    dragging.current = false;
+  };
+
+  /* ---------------- MAP IMAGE ---------------- */
+  const mapImage = (lat, lon) =>
+    lat && lon
+      ? `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lon}&zoom=15&size=500x500&markers=${lat},${lon},red`
+      : "/placeholder.png";
+
   /* ---------------- RENDER ---------------- */
   return (
     <div className="page">
@@ -66,15 +86,12 @@ function LiveCameras() {
                     alt={cam.id}
                   />
                 ) : (
-                  <img
-                    className="camera-stream"
-                    alt="map"
-                    src={
-                      cam.lat && cam.lon
-                        ? `https://staticmap.openstreetmap.de/staticmap.php?center=${cam.lat},${cam.lon}&zoom=15&size=400x400&markers=${cam.lat},${cam.lon},red`
-                        : "/placeholder.png"
-                    }
-                  />
+                  <iframe
+  src="http://localhost:5000/api/hotspots/map"
+  className="camera-stream"
+  title="map"
+/>
+
                 )}
               </div>
 
@@ -119,17 +136,27 @@ function LiveCameras() {
               onWheel={onWheel}
               onMouseDown={onDown}
               onMouseMove={onMove}
-              onMouseUp={() => (dragging.current = false)}
+              onMouseUp={stopDrag}
+              onMouseLeave={stopDrag}
               onDoubleClick={resetView}
             >
-              <img
-                src={`http://localhost:5000/video/${activeCam.id}`}
-                className="camera-modal-stream"
-                style={{
-                  transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`
-                }}
-                alt={activeCam.id}
-              />
+              {activeCam.status === "ACTIVE" ? (
+                <img
+                  src={`http://localhost:5000/video/${activeCam.id}`}
+                  className="camera-modal-stream"
+                  style={{
+                    transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`
+                  }}
+                  alt={activeCam.id}
+                />
+              ) : (
+                <iframe
+  src="http://localhost:5000/api/hotspots/map"
+  className="camera-stream"
+  title="map"
+/>
+
+              )}
             </div>
           </div>
         </div>

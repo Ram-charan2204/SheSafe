@@ -3,90 +3,49 @@ import folium
 from folium.plugins import HeatMap
 
 # ---------------- LOAD DATA ----------------
-df = pd.read_csv("alert_logs.csv")
+df = pd.read_csv("hotspot_priority.csv")
 
-# Force numeric conversion (robust for real-world data)
-df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-
-# Drop invalid rows
-df = df.dropna(subset=["latitude", "longitude"])
-
-# ---------------- HANDLE EMPTY DATA ----------------
 if df.empty:
-    print("⚠️ No alerts available. Generating empty hotspot map.")
-
-    # Create empty hotspot CSV
-    pd.DataFrame(
-        columns=["lat_bucket", "lon_bucket", "total_risk", "alert_count"]
-    ).to_csv("hotspot_priority.csv", index=False)
-
-    # Default map center (Hyderabad – safe fallback)
-    m = folium.Map(location=[17.3850, 78.4867], zoom_start=12)
-    m.save("crime_hotspot_map.html")
-
-    print("\n✅ Files generated:")
-    print(" - crime_hotspot_map.html (empty)")
-    print(" - hotspot_priority.csv (empty)")
+    print("⚠️ No hotspot data available.")
     exit()
 
-# ---------------- RISK WEIGHTS ----------------
-ALERT_WEIGHTS = {
-    "SOS_GESTURE": 5,
-    "HIGH_RISK_AUDIO": 4,
-    "WOMAN_SURROUNDED": 3,
-    "WOMAN_ISOLATED": 1
-}
+# ---------------- MAP CENTER ----------------
+center_lat = df["lat_bucket"].mean()
+center_lon = df["lon_bucket"].mean()
 
-df["risk_score"] = df["alert_type"].map(ALERT_WEIGHTS).fillna(0)
+m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
 
-# ---------------- CREATE LOCATION BUCKETS ----------------
-df["lat_bucket"] = df["latitude"].round(3)
-df["lon_bucket"] = df["longitude"].round(3)
-
-# ---------------- AGGREGATE HOTSPOTS ----------------
-hotspots = (
-    df.groupby(["lat_bucket", "lon_bucket"])
-      .agg(
-          total_risk=("risk_score", "sum"),
-          alert_count=("alert_type", "count")
-      )
-      .reset_index()
-      .sort_values(by="total_risk", ascending=False)
-)
-
-# ---------------- PRINT SORTED HOTSPOTS ----------------
-print("\n🔥 HOTSPOTS SORTED BY RISK (HIGH → LOW)\n")
-print(hotspots)
-
-# Save hotspot priority for frontend
-hotspots.to_csv("hotspot_priority.csv", index=False)
-
-# ---------------- GENERATE MAP ----------------
-center_lat = df["latitude"].mean()
-center_lon = df["longitude"].mean()
-
-m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
-
-# Heatmap data: [lat, lon, weight]
+# ---------------- HEATMAP (INTENSITY) ----------------
 heat_data = [
     [row["lat_bucket"], row["lon_bucket"], row["total_risk"]]
-    for _, row in hotspots.iterrows()
+    for _, row in df.iterrows()
 ]
 
-HeatMap(heat_data, radius=25).add_to(m)
+HeatMap(heat_data, radius=30, blur=20).add_to(m)
 
-# Optional: Mark top 5 hotspots
-for _, row in hotspots.head(5).iterrows():
-    folium.Marker(
+# ---------------- RISK COLOR FUNCTION ----------------
+def risk_color(risk):
+    if risk >= 15:
+        return "red"
+    elif risk >= 5:
+        return "orange"
+    return "green"
+
+# ---------------- COLORED HOTSPOTS ----------------
+for _, row in df.iterrows():
+    folium.CircleMarker(
         location=[row["lat_bucket"], row["lon_bucket"]],
-        popup=f"Risk Score: {row['total_risk']} | Alerts: {row['alert_count']}",
-        icon=folium.Icon(color="red")
+        radius=10,
+        color=risk_color(row["total_risk"]),
+        fill=True,
+        fill_color=risk_color(row["total_risk"]),
+        fill_opacity=0.8,
+        popup=(
+            f"Risk: {row['total_risk']}<br>"
+            f"Alerts: {row['alert_count']}"
+        )
     ).add_to(m)
 
-# Save map
+# ---------------- SAVE MAP ----------------
 m.save("crime_hotspot_map.html")
-
-print("\n✅ Files generated:")
-print(" - crime_hotspot_map.html")
-print(" - hotspot_priority.csv")
+print("✅ Hotspot map updated with severity colors")

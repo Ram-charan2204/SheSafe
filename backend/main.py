@@ -1,81 +1,97 @@
 import cv2
 import time
 import threading
-import subprocess
 import os
+import subprocess
 from flask import Flask, Response
 
 from modules.video_processing import VideoStream
 from modules.yolo_v8_detection import YOLOv8Detector
 from modules.gender_classification import GenderClassifier
-from modules.risk_analysis import RiskAnalyzer
 from modules.alert_sound import AlertSound
 from modules.alert_logger import AlertLogger
+from modules.alert_router import AlertRouter
+from modules.hand_gesture import HandGestureDetector
+from modules.risk_analysis import RiskAnalyzer
+from modules.sound_detection import SoundAnomalyDetector
 
 from camera_config import CAMERAS
 from stats_store import stats, stats_lock, camera_heartbeat, heartbeat_lock
 from api import register_api_routes
+from generate_initial_hotspot_map import generate_initial_hotspot_map
+from init_risk_state import init_risk_state
 
-# ================================
-# CLEAN START – WIPE GENERATED FILES
-# ================================
-GENERATED_FILES = [
+# ================= CLEAN START =================
+for f in [
     "alert_logs.csv",
     "camera_priority.csv",
     "hotspot_priority.csv",
     "crime_hotspot_map.html"
-]
+]:
+    if os.path.exists(f):
+        os.remove(f)
 
-for file in GENERATED_FILES:
-    try:
-        if os.path.exists(file):
-            os.remove(file)
-            print(f"🧹 Cleared: {file}")
-    except Exception as e:
-        print(f"⚠️ Could not delete {file}: {e}")
-
-# ================================
-# FLASK APP
-# ================================
+# ================= FLASK =================
 app = Flask(__name__)
 register_api_routes(app)
 
 latest_frames = {}
 frame_lock = threading.Lock()
 
-# ---------------- CAMERA STATUS ----------------
-def get_camera_status(cam_id):
-    with heartbeat_lock:
-        last = camera_heartbeat.get(cam_id)
+# ================= ASYNC HELPERS =================
+def async_alert(fn, *args):
+    threading.Thread(target=fn, args=args, daemon=True).start()
 
-    if last is None:
-        return "INACTIVE"
+# ================= AUDIO PRIORITY CONTROLLER =================
+audio_lock = threading.Lock()
+current_audio_level = None
 
-    delta = time.time() - last
-    if delta < 2:
-        return "ACTIVE"
-    elif delta < 5:
-        return "DEGRADED"
-    else:
-        return "INACTIVE"
+ALERT_PRIORITY = {
+    "HIGH": 3,
+    "MEDIUM": 2,
+    "LOW": 1
+}
 
-# ---------------- CAMERA WORKER ----------------
+def reset_audio_level():
+    global current_audio_level
+    current_audio_level = None
+
+def play_priority_sound(sound_player, sound_key, level):
+    global current_audio_level
+
+    with audio_lock:
+        if (
+            current_audio_level is None or
+            ALERT_PRIORITY[level] > ALERT_PRIORITY.get(current_audio_level, 0)
+        ):
+            current_audio_level = level
+            sound_player.play(sound_key)
+            threading.Timer(3, reset_audio_level).start()
+
+# ================= CAMERA WORKER =================
 def camera_worker(camera):
     cam_id = camera["id"]
 
     try:
         video = VideoStream(camera["source"])
     except Exception as e:
-        print(f"❌ {cam_id} failed to start: {e}")
+        print(f"❌ {cam_id} failed:", e)
         return
 
     detector = YOLOv8Detector("yolov8n.pt")
     gender_model = GenderClassifier()
-    risk_analyzer = RiskAnalyzer()
+    gesture = HandGestureDetector()
+    risk = RiskAnalyzer()
+    sound = SoundAnomalyDetector()
+
     alert_sound = AlertSound()
     logger = AlertLogger()
+    mailer = AlertRouter()
 
-    print(f"🎥 Started camera: {cam_id}")
+    sound.start()
+    last_gesture = None
+
+    print(f"🎥 Camera started: {cam_id}")
 
     while True:
         frame = video.get_frame()
@@ -83,22 +99,19 @@ def camera_worker(camera):
             time.sleep(0.05)
             continue
 
-        # 📱 Mobile portrait fix
-        if cam_id.startswith("CAM-MOB"):
-            h, w = frame.shape[:2]
-            if w > h:
-                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-
-        # ❤️ Heartbeat
         with heartbeat_lock:
             camera_heartbeat[cam_id] = time.time()
 
         detections = detector.detect(frame)
         males, females = [], []
 
+        # ---------- PERSON + GENDER ----------
         for x1, y1, x2, y2, conf, crop in detections:
+            if crop.shape[0] < 80 or crop.shape[1] < 80:
+                continue
+
             gender = gender_model.predict(crop)
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            cx, cy = (x1 + x2)//2, (y1 + y2)//2
 
             if gender == "Male":
                 males.append((cx, cy))
@@ -108,20 +121,81 @@ def camera_worker(camera):
                 color = (0, 255, 255)
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, gender, (x1, y1 - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+        # ---------- RISK ANALYSIS ----------
+        risk_event = risk.analyze(females, males)
+
+        if risk_event:
+            alert_key = f"WOMAN_{risk_event}"
+
+            if logger.should_log(cam_id, alert_key, cooldown=8):
+                level = "LOW" if risk_event == "ISOLATED" else "MEDIUM"
+
+                play_priority_sound(
+                    alert_sound,
+                    "isolated" if level == "LOW" else "surrounded",
+                    level
+                )
+
+                async_alert(mailer.send_email, alert_key)
+
+                logger.log(
+                    cam_id,
+                    alert_key,
+                    camera["lat"],
+                    camera["lon"],
+                    severity=level,
+                    risk=1 if level == "LOW" else 3
+                )
+
+        # ---------- HELP GESTURE (EDGE TRIGGERED) ----------
+        gesture_label = gesture.detect(frame)
+
+        if gesture_label in ("TUCK_THUMB", "TRAP_THUMB"):
+            if last_gesture != gesture_label:
+                if logger.should_log(cam_id, gesture_label, cooldown=10):
+                    play_priority_sound(alert_sound, "sos", "HIGH")
+                    async_alert(mailer.send_email, gesture_label)
+
+                    logger.log(
+                        cam_id,
+                        gesture_label,
+                        camera["lat"],
+                        camera["lon"],
+                        severity="HIGH",
+                        risk=5
+                    )
+
+                last_gesture = gesture_label
+
             cv2.putText(
                 frame,
-                gender,
-                (x1, y1 - 8),
+                f"HELP GESTURE: {gesture_label}",
+                (20, 140),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                2
+                1,
+                (0, 0, 255),
+                3
             )
+        else:
+            last_gesture = None
 
-        alert = risk_analyzer.analyze(females, males)
-        if alert:
-            alert_sound.play(alert)
-            logger.log(cam_id, alert, camera["lat"], camera["lon"])
+        # ---------- SOUND ANOMALY ----------
+        if sound.detected():
+            if logger.should_log(cam_id, "HIGH_RISK_AUDIO", cooldown=10):
+                play_priority_sound(alert_sound, "high_risk", "HIGH")
+                async_alert(mailer.send_email, "HIGH_RISK_AUDIO")
+
+                logger.log(
+                    cam_id,
+                    "HIGH_RISK_AUDIO",
+                    camera["lat"],
+                    camera["lon"],
+                    severity="HIGH",
+                    risk=5
+                )
 
         with frame_lock:
             latest_frames[cam_id] = frame.copy()
@@ -130,7 +204,7 @@ def camera_worker(camera):
             stats["persons"] = len(males) + len(females)
             stats["women"] = len(females)
 
-# ---------------- STREAM PER CAMERA ----------------
+# ================= STREAM =================
 def generate_frames(cam_id):
     while True:
         with frame_lock:
@@ -140,14 +214,14 @@ def generate_frames(cam_id):
             time.sleep(0.05)
             continue
 
-        ret, buffer = cv2.imencode(".jpg", frame)
+        ret, buf = cv2.imencode(".jpg", frame)
         if not ret:
             continue
 
         yield (
             b"--frame\r\n"
             b"Content-Type: image/jpeg\r\n\r\n" +
-            buffer.tobytes() +
+            buf.tobytes() +
             b"\r\n"
         )
 
@@ -158,136 +232,34 @@ def video_cam(cam_id):
         mimetype="multipart/x-mixed-replace; boundary=frame"
     )
 
-# ---------------- VIDEO WALL ----------------
-@app.route("/video")
-def video_wall():
-    from camera_config import CAMERAS
+# ================= HOTSPOT WORKER =================
+def camera_risk_worker():
+    while True:
+        subprocess.run(["python", "compute_camera_risk.py"],
+                       stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
 
-    def status_color(status):
-        return {
-            "ACTIVE": "#22c55e",
-            "DEGRADED": "#facc15",
-            "INACTIVE": "#ef4444"
-        }.get(status, "#64748b")
+        subprocess.run(["python", "generate_hotspot_map.py"],
+                       stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
 
-    html = """
-    <html>
-    <head>
-        <title>Live Cameras</title>
-        <style>
-            body {
-                margin: 0;
-                background: #020617;
-                font-family: Inter, Arial, sans-serif;
-                color: #e5e7eb;
-            }
-            h1 {
-                padding: 16px 20px;
-                font-size: 20px;
-            }
-            .grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(320px, 360px));
-                gap: 20px;
-                padding: 20px;
-                justify-content: center;
-            }
-            .card {
-                background: #111827;
-                border: 1px solid #1f2937;
-                border-radius: 14px;
-                overflow: hidden;
-                display: flex;
-                flex-direction: column;
-                height: 300px;
-            }
-            .feed {
-                flex: 1;
-                background: black;
-            }
-            .feed img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-            }
-            .offline {
-                height: 100%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: #94a3b8;
-                font-size: 14px;
-            }
-            .info {
-                padding: 10px 12px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                background: #020617;
-                border-top: 1px solid #1f2937;
-                font-size: 13px;
-            }
-            .status {
-                padding: 3px 10px;
-                border-radius: 999px;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            .location {
-                font-size: 11px;
-                color: #9ca3af;
-                margin-top: 4px;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Live Cameras</h1>
-        <div class="grid">
-    """
+        time.sleep(30)
 
-    for cam in CAMERAS:
-        status = get_camera_status(cam["id"])
-        color = status_color(status)
-
-        html += f"""
-        <div class="card">
-            <div class="feed">
-        """
-
-        if status == "ACTIVE":
-            html += f"""<img src="/video/{cam['id']}">"""
-        else:
-            html += """<div class="offline">Camera Offline</div>"""
-
-        html += f"""
-            </div>
-            <div class="info">
-                <div>
-                    <div>{cam['id']}</div>
-                    <div class="location">{cam['location']}</div>
-                </div>
-                <div class="status" style="background:{color}">
-                    {status}
-                </div>
-            </div>
-        </div>
-        """
-
-    html += """
-        </div>
-    </body>
-    </html>
-    """
-
-    return html
-
-# ---------------- ENTRY ----------------
+# ================= ENTRY =================
 if __name__ == "__main__":
+    init_risk_state()
+    generate_initial_hotspot_map()
+
     for cam in CAMERAS:
         threading.Thread(
             target=camera_worker,
             args=(cam,),
             daemon=True
         ).start()
+
+    threading.Thread(
+        target=camera_risk_worker,
+        daemon=True
+    ).start()
 
     app.run(host="0.0.0.0", port=5000, threaded=True)
